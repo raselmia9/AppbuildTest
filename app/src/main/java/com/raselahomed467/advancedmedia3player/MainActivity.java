@@ -5,12 +5,14 @@ import android.app.AlertDialog;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -18,13 +20,23 @@ import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.activity.OnBackPressedCallback;
+
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.ChannelMixingAudioProcessor;
+import androidx.media3.common.audio.ChannelMixingMatrix;
+import androidx.media3.common.util.UnstableApi;
+
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
+import androidx.media3.exoplayer.audio.AudioSink;
+import androidx.media3.exoplayer.audio.DefaultAudioSink;
+
 import androidx.media3.ui.PlayerView;
 import androidx.media3.ui.TrackSelectionDialogBuilder;
 
@@ -33,20 +45,18 @@ import java.util.Map;
 
 import okhttp3.OkHttpClient;
 
-import androidx.media3.common.audio.AudioProcessor;
-import androidx.media3.common.audio.ChannelMixingAudioProcessor;
-import androidx.media3.common.audio.ChannelMixingMatrix;
-import androidx.media3.common.util.UnstableApi;
-import androidx.media3.exoplayer.DefaultRenderersFactory;
-import androidx.media3.exoplayer.audio.AudioSink;
-import androidx.media3.exoplayer.audio.DefaultAudioSink;
-
-
-
+@UnstableApi
 public class MainActivity extends AppCompatActivity {
 
     private ExoPlayer player;
     private PlayerView playerView;
+
+    private LinearLayout rootLayout;
+    private TextView titleBar;
+    private ScrollView inputScroll;
+
+    private FrameLayout playerContainer;
+    private Button exitFullscreenButton;
 
     private EditText urlInput;
     private EditText cookieInput;
@@ -61,6 +71,10 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean fullscreen = false;
 
+    private final int BG_COLOR = Color.rgb(9, 13, 22);
+    private final int BUTTON_COLOR = Color.rgb(35, 48, 67);
+    private final int PRIMARY_COLOR = Color.rgb(0, 126, 220);
+
     private int dp(float value) {
         return (int) (
                 value * getResources().getDisplayMetrics().density + 0.5f
@@ -71,8 +85,12 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        getWindow().setStatusBarColor(Color.rgb(9, 13, 22));
-        getWindow().setNavigationBarColor(Color.rgb(9, 13, 22));
+        getWindow().setStatusBarColor(BG_COLOR);
+        getWindow().setNavigationBarColor(BG_COLOR);
+
+        getWindow().addFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        );
 
         getWindow().setSoftInputMode(
                 WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
@@ -80,28 +98,52 @@ public class MainActivity extends AppCompatActivity {
 
         buildScreen();
         initializePlayer();
+
+        // Back button: exit fullscreen first
+        getOnBackPressedDispatcher().addCallback(
+                this,
+                new OnBackPressedCallback(true) {
+                    @Override
+                    public void handleOnBackPressed() {
+
+                        if (fullscreen) {
+                            toggleFullscreen();
+                        } else {
+                            finish();
+                        }
+                    }
+                }
+        );
     }
+
+    // ==========================================
+    // BUILD USER INTERFACE
+    // ==========================================
 
     private void buildScreen() {
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(9, 13, 22));
+        rootLayout = new LinearLayout(this);
+        rootLayout.setOrientation(LinearLayout.VERTICAL);
+        rootLayout.setBackgroundColor(BG_COLOR);
 
-        TextView title = new TextView(this);
-        title.setText("ADVANCED MEDIA3 PLAYER");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(18);
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setPadding(dp(16), dp(12), dp(16), dp(12));
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        // Title
+        titleBar = new TextView(this);
 
-        root.addView(
-                title,
+        titleBar.setText("ADVANCED MEDIA3 PLAYER");
+        titleBar.setTextColor(Color.WHITE);
+        titleBar.setTextSize(18);
+        titleBar.setGravity(Gravity.CENTER_VERTICAL);
+        titleBar.setPadding(dp(16), dp(12), dp(16), dp(12));
+        titleBar.setTypeface(null, android.graphics.Typeface.BOLD);
+
+        rootLayout.addView(
+                titleBar,
                 new LinearLayout.LayoutParams(-1, dp(52))
         );
 
-        // Video Player
+        // Player Container
+        playerContainer = new FrameLayout(this);
+        playerContainer.setBackgroundColor(Color.BLACK);
 
         playerView = new PlayerView(this);
 
@@ -111,14 +153,53 @@ public class MainActivity extends AppCompatActivity {
                 PlayerView.SHOW_BUFFERING_WHEN_PLAYING
         );
 
+        playerView.setControllerShowTimeoutMs(3500);
+
         playerView.setResizeMode(
                 androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
         );
 
         playerView.setBackgroundColor(Color.BLACK);
 
-        root.addView(
+        playerContainer.addView(
                 playerView,
+                new FrameLayout.LayoutParams(
+                        -1,
+                        -1
+                )
+        );
+
+        // Fullscreen Exit Button
+        exitFullscreenButton = makeButton("✕", false);
+
+        exitFullscreenButton.setTextSize(20);
+        exitFullscreenButton.setVisibility(View.GONE);
+
+        FrameLayout.LayoutParams exitParams =
+                new FrameLayout.LayoutParams(
+                        dp(48),
+                        dp(48),
+                        Gravity.TOP | Gravity.END
+                );
+
+        exitParams.setMargins(
+                dp(8),
+                dp(8),
+                dp(8),
+                dp(8)
+        );
+
+        playerContainer.addView(
+                exitFullscreenButton,
+                exitParams
+        );
+
+        exitFullscreenButton.setOnClickListener(
+                v -> toggleFullscreen()
+        );
+
+        rootLayout.addView(
+                playerContainer,
                 new LinearLayout.LayoutParams(
                         -1,
                         0,
@@ -127,9 +208,8 @@ public class MainActivity extends AppCompatActivity {
         );
 
         // Scrollable Input Section
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
+        inputScroll = new ScrollView(this);
+        inputScroll.setFillViewport(true);
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -141,10 +221,10 @@ public class MainActivity extends AppCompatActivity {
                 dp(20)
         );
 
-        scroll.addView(content);
+        inputScroll.addView(content);
 
-        root.addView(
-                scroll,
+        rootLayout.addView(
+                inputScroll,
                 new LinearLayout.LayoutParams(
                         -1,
                         0,
@@ -152,6 +232,7 @@ public class MainActivity extends AppCompatActivity {
                 )
         );
 
+        // Request Settings
         content.addView(
                 sectionTitle("STREAM / REQUEST SETTINGS")
         );
@@ -205,7 +286,6 @@ public class MainActivity extends AppCompatActivity {
         );
 
         // Play Button
-
         Button play = makeButton(
                 "▶  PLAY STREAM",
                 true
@@ -219,7 +299,6 @@ public class MainActivity extends AppCompatActivity {
         );
 
         // Player Tools
-
         LinearLayout tools = new LinearLayout(this);
         tools.setOrientation(LinearLayout.HORIZONTAL);
 
@@ -269,8 +348,8 @@ public class MainActivity extends AppCompatActivity {
         full.setOnClickListener(v -> toggleFullscreen());
 
         // Status
-
         statusText = new TextView(this);
+
         statusText.setText("Ready - Enter a stream URL");
         statusText.setTextColor(Color.LTGRAY);
         statusText.setTextSize(12);
@@ -284,8 +363,12 @@ public class MainActivity extends AppCompatActivity {
 
         content.addView(statusText);
 
-        setContentView(root);
+        setContentView(rootLayout);
     }
+
+    // ==========================================
+    // UI HELPERS
+    // ==========================================
 
     private TextView sectionTitle(String text) {
 
@@ -361,9 +444,7 @@ public class MainActivity extends AppCompatActivity {
 
         button.setBackgroundTintList(
                 android.content.res.ColorStateList.valueOf(
-                        primary
-                                ? Color.rgb(0, 126, 220)
-                                : Color.rgb(35, 48, 67)
+                        primary ? PRIMARY_COLOR : BUTTON_COLOR
                 )
         );
 
@@ -381,106 +462,118 @@ public class MainActivity extends AppCompatActivity {
         return params;
     }
 
-    // Initialize ExoPlayer
+    // ==========================================
+    // AUDIO DOWNMIX + EXOPLAYER
+    // ==========================================
 
     private void initializePlayer() {
 
-        OkHttpClient client =
-                new OkHttpClient.Builder().build();
+        try {
 
-        OkHttpDataSource.Factory httpFactory =
-                new OkHttpDataSource.Factory(client);
+            ChannelMixingAudioProcessor downmixProcessor =
+                    new ChannelMixingAudioProcessor();
 
-        DefaultMediaSourceFactory mediaSourceFactory =
-                new DefaultMediaSourceFactory(this)
-                        .setDataSourceFactory(httpFactory);
+            // Mono to Stereo
+            downmixProcessor.putChannelMixingMatrix(
+                    ChannelMixingMatrix.createForConstantPower(1, 2)
+            );
 
-       // 5.1 Surround to Stereo Downmix
-ChannelMixingAudioProcessor downmixProcessor =
-        new ChannelMixingAudioProcessor();
+            // Stereo to Stereo
+            downmixProcessor.putChannelMixingMatrix(
+                    ChannelMixingMatrix.createForConstantPower(2, 2)
+            );
 
-// 3.0 to Stereo
-downmixProcessor.putChannelMixingMatrix(
-        ChannelMixingMatrix.createForConstantPower(3, 2));
+            // 3.0 to Stereo
+            downmixProcessor.putChannelMixingMatrix(
+                    ChannelMixingMatrix.createForConstantPower(3, 2)
+            );
 
-// 4.0 to Stereo
-downmixProcessor.putChannelMixingMatrix(
-        ChannelMixingMatrix.createForConstantPower(4, 2));
+            // 4.0 to Stereo
+            downmixProcessor.putChannelMixingMatrix(
+                    ChannelMixingMatrix.createForConstantPower(4, 2)
+            );
 
-// 5.0 to Stereo
-downmixProcessor.putChannelMixingMatrix(
-        ChannelMixingMatrix.createForConstantPower(5, 2));
+            // 5.0 to Stereo
+            downmixProcessor.putChannelMixingMatrix(
+                    ChannelMixingMatrix.createForConstantPower(5, 2)
+            );
 
-// 5.1 to Stereo
-downmixProcessor.putChannelMixingMatrix(
-        ChannelMixingMatrix.createForConstantPower(6, 2));
+            // 5.1 to Stereo
+            downmixProcessor.putChannelMixingMatrix(
+                    ChannelMixingMatrix.createForConstantPower(6, 2)
+            );
 
-// Custom Audio Renderer
-DefaultRenderersFactory renderersFactory =
-        new DefaultRenderersFactory(this) {
+            DefaultRenderersFactory renderersFactory =
+                    new DefaultRenderersFactory(this) {
 
-    @Override
-    protected AudioSink buildAudioSink(
-            android.content.Context context,
-            boolean enableFloatOutput,
-            boolean enableAudioTrackPlaybackParams,
-            boolean enableOffload) {
+                @Override
+                protected AudioSink buildAudioSink(
+                        android.content.Context context,
+                        boolean enableFloatOutput,
+                        boolean enableAudioOutputPlaybackParams) {
 
-        return new DefaultAudioSink.Builder(context)
-                .setEnableFloatOutput(enableFloatOutput)
-                .setEnableAudioTrackPlaybackParams(
-                        enableAudioTrackPlaybackParams)
-                .setOffloadMode(
-                        DefaultAudioSink.OFFLOAD_MODE_DISABLED)
-                .setAudioProcessors(
-                        new AudioProcessor[]{downmixProcessor})
-                .build();
+                    return new DefaultAudioSink.Builder(context)
+                            .setAudioProcessors(
+                                    new AudioProcessor[]{
+                                            downmixProcessor
+                                    }
+                            )
+                            .build();
+                }
+            };
+
+            renderersFactory.setEnableDecoderFallback(true);
+
+            player = new ExoPlayer.Builder(
+                    this,
+                    renderersFactory
+            ).build();
+
+            playerView.setPlayer(player);
+
+            player.addListener(new Player.Listener() {
+
+                @Override
+                public void onPlaybackStateChanged(int state) {
+
+                    if (state == Player.STATE_BUFFERING) {
+                        setStatus("Buffering...");
+                    }
+
+                    else if (state == Player.STATE_READY) {
+                        setStatus("Playing / Ready");
+                    }
+
+                    else if (state == Player.STATE_ENDED) {
+                        setStatus("Playback ended");
+                    }
+
+                    else if (state == Player.STATE_IDLE) {
+                        setStatus("Ready");
+                    }
+                }
+
+                @Override
+                public void onPlayerError(PlaybackException error) {
+
+                    setStatus(
+                            "Playback error: "
+                                    + error.getErrorCodeName()
+                                    + " - "
+                                    + error.getMessage()
+                    );
+                }
+            });
+
+        } catch (Exception e) {
+
+            toast("Player initialization error: " + e.getMessage());
+        }
     }
-};
 
-renderersFactory.setEnableDecoderFallback(true);
-
-// Create ExoPlayer
-player = new ExoPlayer.Builder(this, renderersFactory).build();
-
-        playerView.setPlayer(player);
-
-        player.addListener(new Player.Listener() {
-
-            @Override
-            public void onPlaybackStateChanged(int state) {
-
-                if (state == Player.STATE_BUFFERING) {
-                    setStatus("Buffering...");
-                }
-
-                else if (state == Player.STATE_READY) {
-                    setStatus("Playing / Ready");
-                }
-
-                else if (state == Player.STATE_ENDED) {
-                    setStatus("Playback ended");
-                }
-
-                else if (state == Player.STATE_IDLE) {
-                    setStatus("Ready");
-                }
-            }
-
-            @Override
-            public void onPlayerError(PlaybackException error) {
-
-                setStatus(
-                        "Playback error: "
-                                + error.getErrorCodeName()
-                                + " - "
-                                + error.getMessage()
-                );
-            }
-        });
-    }
-
-    // Play Stream With Custom Headers
+    // ==========================================
+    // PLAY STREAM WITH CUSTOM HEADERS
+    // ==========================================
 
     private void playStream() {
 
@@ -512,8 +605,9 @@ player = new ExoPlayer.Builder(this, renderersFactory).build();
                 httpFactory.setDefaultRequestProperties(headers);
             }
 
-            DefaultMediaSourceFactory sourceFactory =
-                    new DefaultMediaSourceFactory(this)
+            androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+                    sourceFactory =
+                    new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this)
                             .setDataSourceFactory(httpFactory);
 
             MediaItem mediaItem = buildMediaItem(url);
@@ -535,7 +629,9 @@ player = new ExoPlayer.Builder(this, renderersFactory).build();
         }
     }
 
-    // Media Item and DRM Configuration
+    // ==========================================
+    // MEDIA ITEM + WIDEVINE DRM
+    // ==========================================
 
     private MediaItem buildMediaItem(String url) {
 
@@ -565,7 +661,9 @@ player = new ExoPlayer.Builder(this, renderersFactory).build();
         return item.build();
     }
 
-    // Parse Custom Headers
+    // ==========================================
+    // CUSTOM HEADER PARSER
+    // ==========================================
 
     private Map<String, String> parseHeaders(String raw) {
 
@@ -611,7 +709,9 @@ player = new ExoPlayer.Builder(this, renderersFactory).build();
                 : edit.getText().toString().trim();
     }
 
-    // Audio and Subtitle Selection
+    // ==========================================
+    // AUDIO / SUBTITLE TRACK SELECTION
+    // ==========================================
 
     private void showTrackSelection(
             int trackType,
@@ -657,9 +757,13 @@ player = new ExoPlayer.Builder(this, renderersFactory).build();
                 .show();
     }
 
-    // Playback Speed
+    // ==========================================
+    // PLAYBACK SPEED
+    // ==========================================
 
     private void showSpeedDialog() {
+
+        if (player == null) return;
 
         String[] speeds = {
                 "0.25x",
@@ -693,7 +797,9 @@ player = new ExoPlayer.Builder(this, renderersFactory).build();
                 .show();
     }
 
-    // Fullscreen
+    // ==========================================
+    // IMMERSIVE LANDSCAPE FULLSCREEN
+    // ==========================================
 
     private void toggleFullscreen() {
 
@@ -701,27 +807,115 @@ player = new ExoPlayer.Builder(this, renderersFactory).build();
 
         if (fullscreen) {
 
+            // Landscape
             setRequestedOrientation(
                     ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             );
 
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            // Hide header
+            titleBar.setVisibility(View.GONE);
+
+            // Hide all input boxes and tools
+            inputScroll.setVisibility(View.GONE);
+
+            // Player takes entire available screen
+            playerContainer.setLayoutParams(
+                    new LinearLayout.LayoutParams(
+                            -1,
+                            0,
+                            1f
+                    )
             );
+
+            // Show fullscreen exit button
+            exitFullscreenButton.setVisibility(View.VISIBLE);
+
+            // Allow display cutout area on Android 9+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+
+                WindowManager.LayoutParams attrs =
+                        getWindow().getAttributes();
+
+                attrs.layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams
+                                .LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+
+                getWindow().setAttributes(attrs);
+            }
+
+            getWindow().setStatusBarColor(Color.TRANSPARENT);
+            getWindow().setNavigationBarColor(Color.TRANSPARENT);
+
+            // Immersive Sticky Fullscreen
+            int flags =
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+
+            getWindow()
+                    .getDecorView()
+                    .setSystemUiVisibility(flags);
+
+            setStatus("Fullscreen Mode");
 
         } else {
 
+            // Restore portrait
             setRequestedOrientation(
-                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             );
 
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_VISIBLE
+            // Restore system bars
+            getWindow()
+                    .getDecorView()
+                    .setSystemUiVisibility(
+                            View.SYSTEM_UI_FLAG_VISIBLE
+                    );
+
+            getWindow().setStatusBarColor(BG_COLOR);
+            getWindow().setNavigationBarColor(BG_COLOR);
+
+            // Restore display cutout default
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+
+                WindowManager.LayoutParams attrs =
+                        getWindow().getAttributes();
+
+                attrs.layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams
+                                .LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+
+                getWindow().setAttributes(attrs);
+            }
+
+            // Restore header
+            titleBar.setVisibility(View.VISIBLE);
+
+            // Restore input section
+            inputScroll.setVisibility(View.VISIBLE);
+
+            // Restore player height
+            playerContainer.setLayoutParams(
+                    new LinearLayout.LayoutParams(
+                            -1,
+                            0,
+                            0.30f
+                    )
             );
+
+            // Hide fullscreen exit button
+            exitFullscreenButton.setVisibility(View.GONE);
+
+            setStatus("Normal Mode");
         }
     }
+
+    // ==========================================
+    // STATUS + TOAST
+    // ==========================================
 
     private void setStatus(String message) {
 
@@ -738,6 +932,10 @@ player = new ExoPlayer.Builder(this, renderersFactory).build();
                 Toast.LENGTH_LONG
         ).show();
     }
+
+    // ==========================================
+    // LIFECYCLE
+    // ==========================================
 
     @Override
     protected void onStop() {
