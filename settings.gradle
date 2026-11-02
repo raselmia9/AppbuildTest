@@ -1,8 +1,6 @@
 
-import androidx.media3.buildlogic.includeMedia3
-
 pluginManagement {
-    includeBuild("media/build-logic-settings")
+    includeBuild('media/build-logic-settings')
 
     repositories {
         google()
@@ -22,8 +20,8 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AppbuildTest"
+rootProject.name = 'AppbuildTest'
 
 include ':app'
 
-includeMedia3.execute(file("media"))
+includeMedia3.execute(file('media'))
