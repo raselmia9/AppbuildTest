@@ -254,10 +254,13 @@ public class MainActivity extends AppCompatActivity {
 
         playerContainer.addView(rightControls, rightParams);
 
-        // Show side controls with Media3 controls
+        // Controller visibility listener
+        // Explicit interface cast fixes ambiguous method error.
         playerView.setControllerVisibilityListener(
-                visibility -> {
+                (PlayerView.ControllerVisibilityListener) visibility -> {
+
                     if (leftControls != null && rightControls != null) {
+
                         int sideVisibility =
                                 visibility == View.VISIBLE
                                         ? View.VISIBLE
