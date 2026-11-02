@@ -2,15 +2,19 @@
 package com.raselahomed467.advancedmedia3player;
 
 import android.app.AlertDialog;
+import android.app.PictureInPictureParams;
 import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Base64;
+import android.util.Rational;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -23,6 +27,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.activity.OnBackPressedCallback;
 
 import androidx.media3.common.C;
+import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
@@ -36,11 +41,20 @@ import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.audio.AudioSink;
 import androidx.media3.exoplayer.audio.DefaultAudioSink;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager;
+import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
+import androidx.media3.exoplayer.drm.LocalMediaDrmCallback;
+import androidx.media3.exoplayer.drm.DrmSessionManager;
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManagerProvider;
 
 import androidx.media3.ui.PlayerView;
 import androidx.media3.ui.TrackSelectionDialogBuilder;
+import androidx.media3.ui.AspectRatioFrameLayout;
 
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import okhttp3.OkHttpClient;
@@ -56,20 +70,14 @@ public class MainActivity extends AppCompatActivity {
     private ScrollView inputScroll;
 
     private FrameLayout playerContainer;
-    private Button exitFullscreenButton;
+    private LinearLayout leftControls;
+    private LinearLayout rightControls;
 
     private EditText urlInput;
-    private EditText cookieInput;
-    private EditText refererInput;
-    private EditText userAgentInput;
-    private EditText originInput;
-    private EditText authInput;
-    private EditText drmUrlInput;
-    private EditText drmHeadersInput;
-
     private TextView statusText;
 
     private boolean fullscreen = false;
+    private int resizeMode = 0;
 
     private final int BG_COLOR = Color.rgb(9, 13, 22);
     private final int BUTTON_COLOR = Color.rgb(35, 48, 67);
@@ -104,7 +112,6 @@ public class MainActivity extends AppCompatActivity {
                 new OnBackPressedCallback(true) {
                     @Override
                     public void handleOnBackPressed() {
-
                         if (fullscreen) {
                             toggleFullscreen();
                         } else {
@@ -126,7 +133,6 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.setBackgroundColor(BG_COLOR);
 
         titleBar = new TextView(this);
-
         titleBar.setText("ADVANCED MEDIA3 PLAYER");
         titleBar.setTextColor(Color.WHITE);
         titleBar.setTextSize(18);
@@ -146,15 +152,19 @@ public class MainActivity extends AppCompatActivity {
         playerView = new PlayerView(this);
 
         playerView.setUseController(true);
-
         playerView.setShowBuffering(
                 PlayerView.SHOW_BUFFERING_WHEN_PLAYING
         );
 
         playerView.setControllerShowTimeoutMs(3500);
+        playerView.setControllerHideOnTouch(true);
+
+        playerView.setShowNextButton(false);
+        playerView.setShowPreviousButton(false);
+        playerView.setShowSubtitleButton(false);
 
         playerView.setResizeMode(
-                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                AspectRatioFrameLayout.RESIZE_MODE_FIT
         );
 
         playerView.setBackgroundColor(Color.BLACK);
@@ -164,33 +174,99 @@ public class MainActivity extends AppCompatActivity {
                 new FrameLayout.LayoutParams(-1, -1)
         );
 
-        // Fullscreen Exit Button
-        exitFullscreenButton = makeButton("✕", false);
+        // Left-side controls
+        leftControls = new LinearLayout(this);
+        leftControls.setOrientation(LinearLayout.VERTICAL);
+        leftControls.setGravity(Gravity.CENTER);
 
-        exitFullscreenButton.setTextSize(20);
-        exitFullscreenButton.setVisibility(View.GONE);
+        addSideButton(
+                leftControls,
+                "CC",
+                "Subtitle",
+                () -> showTrackSelection(
+                        C.TRACK_TYPE_TEXT,
+                        "Subtitle Tracks"
+                )
+        );
 
-        FrameLayout.LayoutParams exitParams =
+        addSideButton(
+                leftControls,
+                "♫",
+                "Audio Track",
+                () -> showTrackSelection(
+                        C.TRACK_TYPE_AUDIO,
+                        "Audio Tracks"
+                )
+        );
+
+        FrameLayout.LayoutParams leftParams =
                 new FrameLayout.LayoutParams(
                         dp(48),
-                        dp(48),
-                        Gravity.TOP | Gravity.END
+                        -2,
+                        Gravity.CENTER_VERTICAL | Gravity.START
                 );
 
-        exitParams.setMargins(
-                dp(8),
-                dp(8),
-                dp(8),
-                dp(8)
+        leftParams.leftMargin = dp(5);
+
+        playerContainer.addView(leftControls, leftParams);
+
+        // Right-side controls
+        rightControls = new LinearLayout(this);
+        rightControls.setOrientation(LinearLayout.VERTICAL);
+        rightControls.setGravity(Gravity.CENTER);
+
+        addSideButton(
+                rightControls,
+                "↗",
+                "Resize",
+                this::cycleResizeMode
         );
 
-        playerContainer.addView(
-                exitFullscreenButton,
-                exitParams
+        addSideButton(
+                rightControls,
+                "1×",
+                "Playback Speed",
+                this::showSpeedDialog
         );
 
-        exitFullscreenButton.setOnClickListener(
-                v -> toggleFullscreen()
+        addSideButton(
+                rightControls,
+                "⛶",
+                "Fullscreen",
+                this::toggleFullscreen
+        );
+
+        addSideButton(
+                rightControls,
+                "▣",
+                "Picture in Picture",
+                this::enterPictureInPicture
+        );
+
+        FrameLayout.LayoutParams rightParams =
+                new FrameLayout.LayoutParams(
+                        dp(48),
+                        -2,
+                        Gravity.CENTER_VERTICAL | Gravity.END
+                );
+
+        rightParams.rightMargin = dp(5);
+
+        playerContainer.addView(rightControls, rightParams);
+
+        // Show side controls with Media3 controls
+        playerView.setControllerVisibilityListener(
+                visibility -> {
+                    if (leftControls != null && rightControls != null) {
+                        int sideVisibility =
+                                visibility == View.VISIBLE
+                                        ? View.VISIBLE
+                                        : View.GONE;
+
+                        leftControls.setVisibility(sideVisibility);
+                        rightControls.setVisibility(sideVisibility);
+                    }
+                }
         );
 
         rootLayout.addView(
@@ -202,13 +278,12 @@ public class MainActivity extends AppCompatActivity {
                 )
         );
 
-        // Scrollable Input Section
+        // Input section
         inputScroll = new ScrollView(this);
         inputScroll.setFillViewport(true);
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-
         content.setPadding(
                 dp(14),
                 dp(12),
@@ -227,134 +302,41 @@ public class MainActivity extends AppCompatActivity {
                 )
         );
 
-        // Request Settings
         content.addView(
-                sectionTitle("STREAM / REQUEST SETTINGS")
+                sectionTitle("STREAM / DRM / REQUEST SETTINGS")
         );
 
         urlInput = addField(
                 content,
-                "Video URL (MPD / M3U8 / MKV / MP4)",
-                false
-        );
-
-        cookieInput = addField(
-                content,
-                "Cookie (optional)",
-                false
-        );
-
-        refererInput = addField(
-                content,
-                "Referer (optional)",
-                false
-        );
-
-        userAgentInput = addField(
-                content,
-                "User-Agent (optional)",
-                false
-        );
-
-        originInput = addField(
-                content,
-                "Origin (optional)",
-                false
-        );
-
-        authInput = addField(
-                content,
-                "Authorization (optional)",
-                false
-        );
-
-        drmUrlInput = addField(
-                content,
-                "DRM License URL - Widevine (optional)",
-                false
-        );
-
-        drmHeadersInput = addField(
-                content,
-                "DRM Headers (Key: Value per line)",
+                "Video URL | Referer=...&Cookie=...&drmScheme=...",
                 true
         );
+
+        urlInput.setMinLines(3);
+        urlInput.setTextSize(13);
 
         // Play Button
-        Button play = makeButton(
-                "▶  PLAY STREAM",
+        TextView playButton = makeActionButton(
+                "▶   PLAY STREAM",
                 true
         );
 
-        play.setOnClickListener(v -> playStream());
+        playButton.setOnClickListener(v -> playStream());
 
-        content.addView(
-                play,
-                buttonParams()
-        );
+        LinearLayout.LayoutParams playParams =
+                new LinearLayout.LayoutParams(-1, dp(52));
 
-        // Player Tools
-        LinearLayout tools = new LinearLayout(this);
-        tools.setOrientation(LinearLayout.HORIZONTAL);
+        playParams.topMargin = dp(8);
+        playParams.bottomMargin = dp(8);
 
-        Button audio = makeButton("AUDIO", false);
-        Button subtitles = makeButton("SUBTITLES", false);
-        Button speed = makeButton("SPEED", false);
-        Button full = makeButton("FULLSCREEN", false);
-
-        tools.addView(
-                audio,
-                new LinearLayout.LayoutParams(0, dp(46), 1)
-        );
-
-        tools.addView(
-                subtitles,
-                new LinearLayout.LayoutParams(0, dp(46), 1)
-        );
-
-        tools.addView(
-                speed,
-                new LinearLayout.LayoutParams(0, dp(46), 1)
-        );
-
-        tools.addView(
-                full,
-                new LinearLayout.LayoutParams(0, dp(46), 1)
-        );
-
-        content.addView(tools);
-
-        audio.setOnClickListener(
-                v -> showTrackSelection(
-                        C.TRACK_TYPE_AUDIO,
-                        "Audio Tracks"
-                )
-        );
-
-        subtitles.setOnClickListener(
-                v -> showTrackSelection(
-                        C.TRACK_TYPE_TEXT,
-                        "Subtitle Tracks"
-                )
-        );
-
-        speed.setOnClickListener(v -> showSpeedDialog());
-
-        full.setOnClickListener(v -> toggleFullscreen());
+        content.addView(playButton, playParams);
 
         // Status
         statusText = new TextView(this);
-
         statusText.setText("Ready - Enter a stream URL");
         statusText.setTextColor(Color.LTGRAY);
         statusText.setTextSize(12);
-
-        statusText.setPadding(
-                dp(4),
-                dp(12),
-                dp(4),
-                dp(4)
-        );
+        statusText.setPadding(dp(4), dp(12), dp(4), dp(4));
 
         content.addView(statusText);
 
@@ -362,8 +344,76 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // UI HELPERS
+    // SIDE CONTROL BUTTONS
     // ==========================================
+
+    private void addSideButton(
+            LinearLayout parent,
+            String symbol,
+            String description,
+            Runnable action
+    ) {
+
+        TextView button = new TextView(this);
+
+        button.setText(symbol);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(19);
+        button.setGravity(Gravity.CENTER);
+        button.setContentDescription(description);
+        button.setFocusable(true);
+        button.setClickable(true);
+
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.argb(185, 35, 48, 67));
+        background.setCornerRadius(dp(12));
+
+        button.setBackground(background);
+
+        LinearLayout.LayoutParams params =
+                new LinearLayout.LayoutParams(
+                        dp(40),
+                        dp(40)
+                );
+
+        params.topMargin = dp(3);
+        params.bottomMargin = dp(3);
+
+        parent.addView(button, params);
+
+        button.setOnClickListener(v -> {
+            action.run();
+
+            if (playerView != null && !isInPipMode()) {
+                playerView.showController();
+            }
+        });
+    }
+
+    private TextView makeActionButton(
+            String text,
+            boolean primary
+    ) {
+
+        TextView button = new TextView(this);
+
+        button.setText(text);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(primary ? 15 : 12);
+        button.setGravity(Gravity.CENTER);
+        button.setTypeface(null, android.graphics.Typeface.BOLD);
+
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(
+                primary ? PRIMARY_COLOR : BUTTON_COLOR
+        );
+        background.setCornerRadius(dp(10));
+
+        button.setBackground(background);
+        button.setClickable(true);
+
+        return button;
+    }
 
     private TextView sectionTitle(String text) {
 
@@ -373,7 +423,6 @@ public class MainActivity extends AppCompatActivity {
         view.setTextColor(Color.rgb(85, 194, 255));
         view.setTextSize(12);
         view.setTypeface(null, android.graphics.Typeface.BOLD);
-
         view.setPadding(0, dp(8), 0, dp(8));
 
         return view;
@@ -415,7 +464,7 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout.LayoutParams params =
                 new LinearLayout.LayoutParams(
                         -1,
-                        multiline ? dp(82) : dp(54)
+                        multiline ? dp(100) : dp(54)
                 );
 
         params.bottomMargin = dp(8);
@@ -423,38 +472,6 @@ public class MainActivity extends AppCompatActivity {
         parent.addView(field, params);
 
         return field;
-    }
-
-    private Button makeButton(
-            String text,
-            boolean primary
-    ) {
-
-        Button button = new Button(this);
-
-        button.setText(text);
-        button.setAllCaps(false);
-        button.setTextSize(primary ? 15 : 11);
-        button.setTextColor(Color.WHITE);
-
-        button.setBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(
-                        primary ? PRIMARY_COLOR : BUTTON_COLOR
-                )
-        );
-
-        return button;
-    }
-
-    private LinearLayout.LayoutParams buttonParams() {
-
-        LinearLayout.LayoutParams params =
-                new LinearLayout.LayoutParams(-1, dp(52));
-
-        params.topMargin = dp(5);
-        params.bottomMargin = dp(10);
-
-        return params;
     }
 
     // ==========================================
@@ -541,17 +558,11 @@ public class MainActivity extends AppCompatActivity {
 
                     if (state == Player.STATE_BUFFERING) {
                         setStatus("Buffering...");
-                    }
-
-                    else if (state == Player.STATE_READY) {
+                    } else if (state == Player.STATE_READY) {
                         setStatus("Playing / Ready");
-                    }
-
-                    else if (state == Player.STATE_ENDED) {
+                    } else if (state == Player.STATE_ENDED) {
                         setStatus("Playback ended");
-                    }
-
-                    else if (state == Player.STATE_IDLE) {
+                    } else if (state == Player.STATE_IDLE) {
                         setStatus("Ready");
                     }
                 }
@@ -569,32 +580,121 @@ public class MainActivity extends AppCompatActivity {
             });
 
         } catch (Exception e) {
-
             toast("Player initialization error: " + e.getMessage());
         }
     }
 
     // ==========================================
-    // PLAY STREAM WITH CUSTOM HEADERS
+    // URL + PARAMETERS
+    // ==========================================
+
+    private static class StreamConfig {
+        String url = "";
+        String drmScheme = "";
+        String drmLicense = "";
+
+        Map<String, String> headers = new LinkedHashMap<>();
+    }
+
+    private StreamConfig parseStreamInput(String raw) {
+
+        StreamConfig config = new StreamConfig();
+
+        if (raw == null) return config;
+
+        int pipe = raw.indexOf('|');
+
+        if (pipe < 0) {
+            config.url = raw.trim();
+            return config;
+        }
+
+        config.url = raw.substring(0, pipe).trim();
+
+        String parameterText =
+                raw.substring(pipe + 1).trim();
+
+        for (String part : parameterText.split("&")) {
+
+            int equals = part.indexOf('=');
+
+            if (equals <= 0) continue;
+
+            String key =
+                    part.substring(0, equals)
+                            .trim()
+                            .toLowerCase(Locale.US);
+
+            String value =
+                    part.substring(equals + 1).trim();
+
+            if (value.isEmpty()) continue;
+
+            switch (key) {
+
+                case "drmscheme":
+                    config.drmScheme = value.toLowerCase(Locale.US);
+                    break;
+
+                case "drmlicense":
+                    config.drmLicense = value;
+                    break;
+
+                case "cookie":
+                    config.headers.put("Cookie", value);
+                    break;
+
+                case "referer":
+                    config.headers.put("Referer", value);
+                    break;
+
+                case "user-agent":
+                    config.headers.put("User-Agent", value);
+                    break;
+
+                case "origin":
+                    config.headers.put("Origin", value);
+                    break;
+
+                case "authorization":
+                    config.headers.put("Authorization", value);
+                    break;
+            }
+        }
+
+        // Auto-detect DRM type if omitted
+        if (config.drmScheme.isEmpty()
+                && !config.drmLicense.isEmpty()) {
+
+            if (config.drmLicense.contains(":")
+                    && !config.drmLicense.startsWith("http")) {
+                config.drmScheme = "clearkey";
+            } else {
+                config.drmScheme = "widevine";
+            }
+        }
+
+        return config;
+    }
+
+    // ==========================================
+    // PLAY STREAM
     // ==========================================
 
     private void playStream() {
 
-        String url = value(urlInput);
+        StreamConfig config =
+                parseStreamInput(value(urlInput));
 
-        if (url.isEmpty()) {
+        if (config.url.isEmpty()) {
             toast("প্রথমে Video URL দিন");
             return;
         }
 
-        Map<String, String> headers =
-                new LinkedHashMap<>();
-
-        putHeader(headers, "Cookie", value(cookieInput));
-        putHeader(headers, "Referer", value(refererInput));
-        putHeader(headers, "User-Agent", value(userAgentInput));
-        putHeader(headers, "Origin", value(originInput));
-        putHeader(headers, "Authorization", value(authInput));
+        if (player == null) {
+            toast("Player is not ready");
+            return;
+        }
 
         try {
 
@@ -604,16 +704,57 @@ public class MainActivity extends AppCompatActivity {
             OkHttpDataSource.Factory httpFactory =
                     new OkHttpDataSource.Factory(client);
 
-            if (!headers.isEmpty()) {
-                httpFactory.setDefaultRequestProperties(headers);
+            if (!config.headers.isEmpty()) {
+                httpFactory.setDefaultRequestProperties(
+                        config.headers
+                );
             }
 
-            androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-                    sourceFactory =
-                    new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this)
+            DefaultMediaSourceFactory sourceFactory =
+                    new DefaultMediaSourceFactory(this)
                             .setDataSourceFactory(httpFactory);
 
-            MediaItem mediaItem = buildMediaItem(url);
+            MediaItem mediaItem =
+                    buildMediaItem(config);
+
+            // Local ClearKey manager
+            if ("clearkey".equals(config.drmScheme)) {
+
+                String keyResponse =
+                        createClearKeyResponse(config.drmLicense);
+
+                DrmSessionManager clearKeyManager =
+                        new DefaultDrmSessionManager.Builder()
+                                .setUuidAndExoMediaDrmProvider(
+                                        C.CLEARKEY_UUID,
+                                        FrameworkMediaDrm.DEFAULT_PROVIDER
+                                )
+                                .build(
+                                        new LocalMediaDrmCallback(
+                                                keyResponse.getBytes(
+                                                        StandardCharsets.UTF_8
+                                                )
+                                        )
+                                );
+
+                sourceFactory.setDrmSessionManagerProvider(
+                        mediaItem1 -> clearKeyManager
+                );
+
+            } else {
+
+                // Default Widevine DRM manager
+                DefaultDrmSessionManagerProvider drmProvider =
+                        new DefaultDrmSessionManagerProvider();
+
+                drmProvider.setDrmHttpDataSourceFactory(
+                        httpFactory
+                );
+
+                sourceFactory.setDrmSessionManagerProvider(
+                        drmProvider
+                );
+            }
 
             player.setMediaSource(
                     sourceFactory.createMediaSource(mediaItem)
@@ -626,36 +767,45 @@ public class MainActivity extends AppCompatActivity {
 
         } catch (Exception e) {
 
-            setStatus(
-                    "Could not start: " + e.getMessage()
-            );
+            setStatus("Could not start: " + e.getMessage());
+            toast("Stream error: " + e.getMessage());
         }
     }
 
     // ==========================================
-    // MEDIA ITEM + WIDEVINE DRM
+    // MEDIA ITEM + DRM
     // ==========================================
 
-    private MediaItem buildMediaItem(String url) {
+    private MediaItem buildMediaItem(StreamConfig config) {
 
         MediaItem.Builder item =
                 new MediaItem.Builder()
-                        .setUri(Uri.parse(url));
+                        .setUri(Uri.parse(config.url));
 
-        String licenseUrl = value(drmUrlInput);
+        if ("clearkey".equals(config.drmScheme)) {
 
-        if (!licenseUrl.isEmpty()) {
+            item.setDrmConfiguration(
+                    new MediaItem.DrmConfiguration.Builder(
+                            C.CLEARKEY_UUID
+                    ).build()
+            );
 
-            Map<String, String> drmHeaders =
-                    parseHeaders(value(drmHeadersInput));
+        } else if ("widevine".equals(config.drmScheme)) {
+
+            if (config.drmLicense.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Widevine drmLicense URL is missing"
+                );
+            }
 
             MediaItem.DrmConfiguration.Builder drm =
                     new MediaItem.DrmConfiguration.Builder(
                             C.WIDEVINE_UUID
-                    ).setLicenseUri(licenseUrl);
+                    )
+                            .setLicenseUri(config.drmLicense);
 
-            if (!drmHeaders.isEmpty()) {
-                drm.setLicenseRequestHeaders(drmHeaders);
+            if (!config.headers.isEmpty()) {
+                drm.setLicenseRequestHeaders(config.headers);
             }
 
             item.setDrmConfiguration(drm.build());
@@ -665,51 +815,66 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // CUSTOM HEADER PARSER
+    // CLEARKEY JSON RESPONSE
     // ==========================================
 
-    private Map<String, String> parseHeaders(String raw) {
+    private String createClearKeyResponse(String license) {
 
-        Map<String, String> result =
-                new LinkedHashMap<>();
+        String[] parts = license.split(":", 2);
 
-        for (String line : raw.split("\\r?\\n")) {
+        if (parts.length != 2) {
+            throw new IllegalArgumentException(
+                    "ClearKey format must be KID:KEY"
+            );
+        }
 
-            int split = line.indexOf(':');
+        byte[] kid = hexToBytes(parts[0]);
+        byte[] key = hexToBytes(parts[1]);
 
-            if (split > 0) {
+        if (kid.length != 16 || key.length != 16) {
+            throw new IllegalArgumentException(
+                    "ClearKey KID and KEY must be 32 hexadecimal characters"
+            );
+        }
 
-                String key =
-                        line.substring(0, split).trim();
+        String encodedKid = Base64.encodeToString(
+                kid,
+                Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP
+        );
 
-                String val =
-                        line.substring(split + 1).trim();
+        String encodedKey = Base64.encodeToString(
+                key,
+                Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP
+        );
 
-                if (!key.isEmpty() && !val.isEmpty()) {
-                    result.put(key, val);
-                }
-            }
+        return "{\"keys\":[{\"kty\":\"oct\",\"kid\":\""
+                + encodedKid
+                + "\",\"k\":\""
+                + encodedKey
+                + "\"}],\"type\":\"temporary\"}";
+    }
+
+    private byte[] hexToBytes(String hex) {
+
+        String clean = hex.replace("-", "").trim();
+
+        if (clean.length() % 2 != 0) {
+            throw new IllegalArgumentException("Invalid hexadecimal key");
+        }
+
+        byte[] result = new byte[clean.length() / 2];
+
+        for (int i = 0; i < result.length; i++) {
+
+            int value = Integer.parseInt(
+                    clean.substring(i * 2, i * 2 + 2),
+                    16
+            );
+
+            result[i] = (byte) value;
         }
 
         return result;
-    }
-
-    private void putHeader(
-            Map<String, String> map,
-            String key,
-            String value
-    ) {
-
-        if (value != null && !value.trim().isEmpty()) {
-            map.put(key, value.trim());
-        }
-    }
-
-    private String value(EditText edit) {
-
-        return edit == null
-                ? ""
-                : edit.getText().toString().trim();
     }
 
     // ==========================================
@@ -729,35 +894,122 @@ public class MainActivity extends AppCompatActivity {
                 player,
                 trackType
         )
-                .setTrackNameProvider(format -> {
-
-                    String name = format.label != null
-                            ? format.label
-                            : format.language;
-
-                    if (name == null) {
-                        name = format.sampleMimeType;
-                    }
-
-                    if (name == null) {
-                        name = "Track";
-                    }
-
-                    if (format.channelCount > 0) {
-                        name += " - "
-                                + format.channelCount
-                                + "ch";
-                    }
-
-                    if (format.sampleMimeType != null) {
-                        name += " - "
-                                + format.sampleMimeType;
-                    }
-
-                    return name;
-                })
+                .setTrackNameProvider(
+                        this::getTrackName
+                )
                 .build()
                 .show();
+    }
+
+    private String getTrackName(Format format) {
+
+        StringBuilder name = new StringBuilder();
+
+        if (format.label != null
+                && !format.label.trim().isEmpty()) {
+
+            name.append(format.label.trim());
+
+        } else if (format.language != null
+                && !format.language.equals("und")) {
+
+            Locale language =
+                    Locale.forLanguageTag(format.language);
+
+            String displayName =
+                    language.getDisplayLanguage(Locale.getDefault());
+
+            name.append(
+                    displayName.isEmpty()
+                            ? format.language
+                            : displayName
+            );
+
+        } else {
+            name.append("Track");
+        }
+
+        String mime = format.sampleMimeType;
+
+        if (mime != null) {
+
+            String codec;
+
+            switch (mime) {
+                case "audio/ac3":
+                    codec = "AC3";
+                    break;
+
+                case "audio/eac3":
+                    codec = "E-AC3";
+                    break;
+
+                case "audio/vnd.dts":
+                    codec = "DTS";
+                    break;
+
+                case "audio/vnd.dts.hd":
+                    codec = "DTS-HD";
+                    break;
+
+                case "audio/true-hd":
+                    codec = "TrueHD";
+                    break;
+
+                case "audio/mp4a-latm":
+                    codec = "AAC";
+                    break;
+
+                case "audio/opus":
+                    codec = "Opus";
+                    break;
+
+                case "text/vtt":
+                    codec = "WebVTT";
+                    break;
+
+                case "application/ttml+xml":
+                    codec = "TTML";
+                    break;
+
+                default:
+                    codec = mime;
+                    break;
+            }
+
+            name.append(" • ").append(codec);
+        }
+
+        if (format.channelCount > 0) {
+
+            String channels;
+
+            switch (format.channelCount) {
+                case 1:
+                    channels = "Mono";
+                    break;
+
+                case 2:
+                    channels = "Stereo";
+                    break;
+
+                case 6:
+                    channels = "5.1";
+                    break;
+
+                case 8:
+                    channels = "7.1";
+                    break;
+
+                default:
+                    channels = format.channelCount + "ch";
+                    break;
+            }
+
+            name.append(" • ").append(channels);
+        }
+
+        return name.toString();
     }
 
     // ==========================================
@@ -801,7 +1053,47 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // IMMERSIVE LANDSCAPE FULLSCREEN
+    // VIDEO RESIZE
+    // ==========================================
+
+    private void cycleResizeMode() {
+
+        if (playerView == null) return;
+
+        resizeMode++;
+
+        if (resizeMode > 2) {
+            resizeMode = 0;
+        }
+
+        if (resizeMode == 0) {
+
+            playerView.setResizeMode(
+                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+            );
+
+            toast("Resize: FIT");
+
+        } else if (resizeMode == 1) {
+
+            playerView.setResizeMode(
+                    AspectRatioFrameLayout.RESIZE_MODE_FILL
+            );
+
+            toast("Resize: FILL");
+
+        } else {
+
+            playerView.setResizeMode(
+                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            );
+
+            toast("Resize: ZOOM");
+        }
+    }
+
+    // ==========================================
+    // FULLSCREEN
     // ==========================================
 
     private void toggleFullscreen() {
@@ -824,8 +1116,6 @@ public class MainActivity extends AppCompatActivity {
                             1f
                     )
             );
-
-            exitFullscreenButton.setVisibility(View.VISIBLE);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 
@@ -850,9 +1140,7 @@ public class MainActivity extends AppCompatActivity {
                             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
 
-            getWindow()
-                    .getDecorView()
-                    .setSystemUiVisibility(flags);
+            getWindow().getDecorView().setSystemUiVisibility(flags);
 
             setStatus("Fullscreen Mode");
 
@@ -862,11 +1150,9 @@ public class MainActivity extends AppCompatActivity {
                     ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             );
 
-            getWindow()
-                    .getDecorView()
-                    .setSystemUiVisibility(
-                            View.SYSTEM_UI_FLAG_VISIBLE
-                    );
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_VISIBLE
+            );
 
             getWindow().setStatusBarColor(BG_COLOR);
             getWindow().setNavigationBarColor(BG_COLOR);
@@ -894,9 +1180,109 @@ public class MainActivity extends AppCompatActivity {
                     )
             );
 
-            exitFullscreenButton.setVisibility(View.GONE);
-
             setStatus("Normal Mode");
+        }
+    }
+
+    // ==========================================
+    // PICTURE IN PICTURE
+    // ==========================================
+
+    private boolean isInPipMode() {
+
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
+                && isInPictureInPictureMode();
+    }
+
+    private void enterPictureInPicture() {
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            toast("Picture-in-Picture requires Android 8.0 or newer");
+            return;
+        }
+
+        if (player == null || player.getMediaItemCount() == 0) {
+            toast("প্রথমে ভিডিও চালু করুন");
+            return;
+        }
+
+        try {
+
+            PictureInPictureParams params =
+                    new PictureInPictureParams.Builder()
+                            .setAspectRatio(new Rational(16, 9))
+                            .build();
+
+            enterPictureInPictureMode(params);
+
+        } catch (Exception e) {
+
+            toast("PiP error: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void onUserLeaveHint() {
+
+        super.onUserLeaveHint();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && player != null
+                && player.isPlaying()) {
+
+            enterPictureInPicture();
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(
+            boolean isInPictureInPictureMode,
+            Configuration newConfig
+    ) {
+
+        super.onPictureInPictureModeChanged(
+                isInPictureInPictureMode,
+                newConfig
+        );
+
+        if (isInPictureInPictureMode) {
+
+            titleBar.setVisibility(View.GONE);
+            inputScroll.setVisibility(View.GONE);
+
+            leftControls.setVisibility(View.GONE);
+            rightControls.setVisibility(View.GONE);
+
+            playerContainer.setLayoutParams(
+                    new LinearLayout.LayoutParams(
+                            -1,
+                            0,
+                            1f
+                    )
+            );
+
+        } else {
+
+            if (!fullscreen) {
+
+                titleBar.setVisibility(View.VISIBLE);
+                inputScroll.setVisibility(View.VISIBLE);
+
+                playerContainer.setLayoutParams(
+                        new LinearLayout.LayoutParams(
+                                -1,
+                                0,
+                                0.30f
+                        )
+                );
+            }
+
+            if (playerView != null
+                    && playerView.isControllerFullyVisible()) {
+
+                leftControls.setVisibility(View.VISIBLE);
+                rightControls.setVisibility(View.VISIBLE);
+            }
         }
     }
 
@@ -920,6 +1306,13 @@ public class MainActivity extends AppCompatActivity {
         ).show();
     }
 
+    private String value(EditText edit) {
+
+        return edit == null
+                ? ""
+                : edit.getText().toString().trim();
+    }
+
     // ==========================================
     // LIFECYCLE
     // ==========================================
@@ -929,7 +1322,7 @@ public class MainActivity extends AppCompatActivity {
 
         super.onStop();
 
-        if (player != null) {
+        if (player != null && !isInPipMode()) {
             player.pause();
         }
     }
