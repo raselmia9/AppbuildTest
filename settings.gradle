@@ -1,5 +1,9 @@
 
+import androidx.media3.buildlogic.includeMedia3
+
 pluginManagement {
+    includeBuild("media/build-logic-settings")
+
     repositories {
         google()
         mavenCentral()
@@ -7,15 +11,19 @@ pluginManagement {
     }
 }
 
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+plugins {
+    id 'gradlebuild.media3-settings-logic'
+}
 
+dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
     }
 }
 
-rootProject.name = "AdvancedMedia3Player"
+rootProject.name = "AppbuildTest"
 
-include(":app")
+include ':app'
+
+includeMedia3.execute(file("media"))
