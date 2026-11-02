@@ -99,7 +99,6 @@ public class MainActivity extends AppCompatActivity {
         buildScreen();
         initializePlayer();
 
-        // Back button: exit fullscreen first
         getOnBackPressedDispatcher().addCallback(
                 this,
                 new OnBackPressedCallback(true) {
@@ -126,7 +125,6 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.setOrientation(LinearLayout.VERTICAL);
         rootLayout.setBackgroundColor(BG_COLOR);
 
-        // Title
         titleBar = new TextView(this);
 
         titleBar.setText("ADVANCED MEDIA3 PLAYER");
@@ -163,10 +161,7 @@ public class MainActivity extends AppCompatActivity {
 
         playerContainer.addView(
                 playerView,
-                new FrameLayout.LayoutParams(
-                        -1,
-                        -1
-                )
+                new FrameLayout.LayoutParams(-1, -1)
         );
 
         // Fullscreen Exit Button
@@ -463,7 +458,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // AUDIO DOWNMIX + EXOPLAYER
+    // FFmpeg + AUDIO DOWNMIX + EXOPLAYER
     // ==========================================
 
     private void initializePlayer() {
@@ -503,6 +498,7 @@ public class MainActivity extends AppCompatActivity {
                     ChannelMixingMatrix.createForConstantPower(6, 2)
             );
 
+            // Custom Renderers Factory
             DefaultRenderersFactory renderersFactory =
                     new DefaultRenderersFactory(this) {
 
@@ -522,8 +518,15 @@ public class MainActivity extends AppCompatActivity {
                 }
             };
 
+            // Enable FFmpeg extension renderer
+            renderersFactory.setExtensionRendererMode(
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+            );
+
+            // Allow decoder fallback
             renderersFactory.setEnableDecoderFallback(true);
 
+            // Create ExoPlayer
             player = new ExoPlayer.Builder(
                     this,
                     renderersFactory
@@ -807,18 +810,13 @@ public class MainActivity extends AppCompatActivity {
 
         if (fullscreen) {
 
-            // Landscape
             setRequestedOrientation(
                     ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             );
 
-            // Hide header
             titleBar.setVisibility(View.GONE);
-
-            // Hide all input boxes and tools
             inputScroll.setVisibility(View.GONE);
 
-            // Player takes entire available screen
             playerContainer.setLayoutParams(
                     new LinearLayout.LayoutParams(
                             -1,
@@ -827,10 +825,8 @@ public class MainActivity extends AppCompatActivity {
                     )
             );
 
-            // Show fullscreen exit button
             exitFullscreenButton.setVisibility(View.VISIBLE);
 
-            // Allow display cutout area on Android 9+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 
                 WindowManager.LayoutParams attrs =
@@ -846,7 +842,6 @@ public class MainActivity extends AppCompatActivity {
             getWindow().setStatusBarColor(Color.TRANSPARENT);
             getWindow().setNavigationBarColor(Color.TRANSPARENT);
 
-            // Immersive Sticky Fullscreen
             int flags =
                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                             | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
@@ -863,12 +858,10 @@ public class MainActivity extends AppCompatActivity {
 
         } else {
 
-            // Restore portrait
             setRequestedOrientation(
                     ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             );
 
-            // Restore system bars
             getWindow()
                     .getDecorView()
                     .setSystemUiVisibility(
@@ -878,7 +871,6 @@ public class MainActivity extends AppCompatActivity {
             getWindow().setStatusBarColor(BG_COLOR);
             getWindow().setNavigationBarColor(BG_COLOR);
 
-            // Restore display cutout default
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 
                 WindowManager.LayoutParams attrs =
@@ -891,13 +883,9 @@ public class MainActivity extends AppCompatActivity {
                 getWindow().setAttributes(attrs);
             }
 
-            // Restore header
             titleBar.setVisibility(View.VISIBLE);
-
-            // Restore input section
             inputScroll.setVisibility(View.VISIBLE);
 
-            // Restore player height
             playerContainer.setLayoutParams(
                     new LinearLayout.LayoutParams(
                             -1,
@@ -906,7 +894,6 @@ public class MainActivity extends AppCompatActivity {
                     )
             );
 
-            // Hide fullscreen exit button
             exitFullscreenButton.setVisibility(View.GONE);
 
             setStatus("Normal Mode");
