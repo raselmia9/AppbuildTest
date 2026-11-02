@@ -33,6 +33,16 @@ import java.util.Map;
 
 import okhttp3.OkHttpClient;
 
+import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.ChannelMixingAudioProcessor;
+import androidx.media3.common.audio.ChannelMixingMatrix;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
+import androidx.media3.exoplayer.audio.AudioSink;
+import androidx.media3.exoplayer.audio.DefaultAudioSink;
+
+
+
 public class MainActivity extends AppCompatActivity {
 
     private ExoPlayer player;
@@ -385,9 +395,53 @@ public class MainActivity extends AppCompatActivity {
                 new DefaultMediaSourceFactory(this)
                         .setDataSourceFactory(httpFactory);
 
-        player = new ExoPlayer.Builder(this)
-                .setMediaSourceFactory(mediaSourceFactory)
+       // 5.1 Surround to Stereo Downmix
+ChannelMixingAudioProcessor downmixProcessor =
+        new ChannelMixingAudioProcessor();
+
+// 3.0 to Stereo
+downmixProcessor.putChannelMixingMatrix(
+        ChannelMixingMatrix.createForConstantPower(3, 2));
+
+// 4.0 to Stereo
+downmixProcessor.putChannelMixingMatrix(
+        ChannelMixingMatrix.createForConstantPower(4, 2));
+
+// 5.0 to Stereo
+downmixProcessor.putChannelMixingMatrix(
+        ChannelMixingMatrix.createForConstantPower(5, 2));
+
+// 5.1 to Stereo
+downmixProcessor.putChannelMixingMatrix(
+        ChannelMixingMatrix.createForConstantPower(6, 2));
+
+// Custom Audio Renderer
+DefaultRenderersFactory renderersFactory =
+        new DefaultRenderersFactory(this) {
+
+    @Override
+    protected AudioSink buildAudioSink(
+            android.content.Context context,
+            boolean enableFloatOutput,
+            boolean enableAudioTrackPlaybackParams,
+            boolean enableOffload) {
+
+        return new DefaultAudioSink.Builder(context)
+                .setEnableFloatOutput(enableFloatOutput)
+                .setEnableAudioTrackPlaybackParams(
+                        enableAudioTrackPlaybackParams)
+                .setOffloadMode(
+                        DefaultAudioSink.OFFLOAD_MODE_DISABLED)
+                .setAudioProcessors(
+                        new AudioProcessor[]{downmixProcessor})
                 .build();
+    }
+};
+
+renderersFactory.setEnableDecoderFallback(true);
+
+// Create ExoPlayer
+player = new ExoPlayer.Builder(this, renderersFactory).build();
 
         playerView.setPlayer(player);
 
