@@ -28,16 +28,23 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept Android SDK Licenses
+        run: |
+          set +e
+          yes | sdkmanager --licenses
+          true
+
+      - name: Install Android SDK Components
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-
-      - name: Accept Android SDK Licenses
-        run: yes | sdkmanager --licenses || true
-
-      - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Build Debug APK
         run: gradle --no-daemon assembleDebug
@@ -48,7 +55,7 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk \
             output/AdvancedMedia3Player.apk
 
-      - name: Upload APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AdvancedMedia3Player-APK
