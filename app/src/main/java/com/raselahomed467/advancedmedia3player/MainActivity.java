@@ -1096,11 +1096,11 @@ public class MainActivity extends AppCompatActivity {
                 Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP
         );
 
-        return "{"keys":[{"kty":"oct","kid":""
+        return "{\"keys\":[{\"kty\":\"oct\",\"kid\":\""
                 + encodedKid
-                + "","k":""
+                + "\",\"k\":\""
                 + encodedKey
-                + ""}],"type":"temporary"}";
+                + "\"}],\"type\":\"temporary\"}";
     }
 
     private byte[] hexToBytes(String hex) {
