@@ -824,37 +824,32 @@ public class MainActivity extends AppCompatActivity {
 
             downmixProcessor.putChannelMixingMatrix(matrix51toStereo);
 
-            DefaultAudioSink audioSink =
-                    new DefaultAudioSink.Builder(this)
+            DefaultRenderersFactory renderersFactory =
+                    new DefaultRenderersFactory(this) {
+                @Override
+                protected AudioSink buildAudioSink(
+                        android.content.Context context,
+                        boolean enableFloatOutput,
+                        boolean enableAudioOutputPlaybackParams) {
+                    return new DefaultAudioSink.Builder(context)
                             .setAudioProcessors(
-                                    new AudioProcessor[]{downmixProcessor}
+                                    new AudioProcessor[]{
+                                            downmixProcessor
+                                    }
                             )
                             .build();
+                }
+            };
 
-            DefaultRenderersFactory renderersFactory =
-                    new DefaultRenderersFactory(this)
-                            .setExtensionRendererMode(
-                                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                            );
-
-            renderersFactory.buildAudioRenderers(
-                    this,
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER,
-                    new androidx.media3.exoplayer.audio.MediaCodecAudioRenderer(
-                            this,
-                            androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT,
-                            null,
-                            audioSink
-                    ),
-                    new Handler(Looper.getMainLooper()),
-                    null,
-                    audioSink,
-                    new java.util.ArrayList<>()
+            renderersFactory.setExtensionRendererMode(
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
             );
+            renderersFactory.setEnableDecoderFallback(true);
 
-            player = new ExoPlayer.Builder(this)
-                    .setRenderersFactory(renderersFactory)
-                    .build();
+            player = new ExoPlayer.Builder(
+                    this,
+                    renderersFactory
+            ).build();
 
             playerView.setPlayer(player);
 
